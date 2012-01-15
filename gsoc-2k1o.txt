@@ -250,9 +250,8 @@ index 37de076..9b9d2b9 100644
 
 == Additional resources
 
-- http://vmiklos.hu/gitweb/?p=gsoc2010.git;a=summary[gitweb]
-- link:Miklos_Vajna.tar.gz[patches tarball]
-- link:gsoc-2k1o.txt[application source]
+- https://github.com/vmiklos/gsoc2010[gitweb]
+- https://github.com/downloads/vmiklos/gsoc2010/Miklos_Vajna.tar.gz[patches tarball]
 
 == References
 
