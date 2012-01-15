@@ -1,0 +1,262 @@
+= Improve RTF Export
+Miklos Vajna <vmiklos@frugalware.org>
+
+== Abstract
+
+The recent rework of OpenOffice's binary MS Word .doc (WW8) export
+filter made it easy to extend for other MS Word formats, like DOCX. In
+particular, using the advantages of the shared code to implement a new
+RTF export filter based on this rework is certainly possible to
+implement - and this summer I would like to work on this.
+  
+== Content
+
+=== Detailed Description
+
+==== Full description
+
+OpenOffice Writer's export functionality basically has two forms. The
+old style ones are $$C++$$ filters are subcalled from the Writer class
+(for example: SwRTFWriter for RTF, SwASCWriter for ASCII, SwHTMLWriter
+for HTML). The new style ones are implemented as an UNO component (for
+example: WW8Export for DOC, DocxExport for DOCX). There are currently
+two general problems with the RTF filter:
+
+* It is an old style filter and that interface is meant to be removed
+  http://framework.openoffice.org/servlets/ReadMsg?list=dev&msgNo=994[sooner or later].
+* It is an MS Word format, but it does not use any shared code from
+  MSWordExportBase, the ancestor of WW8Export and DocxExport.
+
+Porting SwRTFWriter to become a subclass of MSWordExportBase is not yet
+done. This summer I would like to implement it.
+
+Additionally - as time permits, after porting is done - I want to pick
+up features from RTF specification which are not yet supported by
+OpenOffice's RTF export filter and add support for them.
+
+==== Benefits
+
+When the project is completed, users who use the RTF export filter can
+have a better one: from a technical view it will use a more modern API,
+from a practical view, it'll be improved in general.
+
+==== Motivation
+
+I got the idea of working on this because I remembered I had a few
+problems with OpenOffice's RTF export facility when I needed it at the
+university: I can remember for example I had problems with justified
+lines. (I haven't checked the issue in detail, it just gave me a feeling
+that improving RTF support would be a good idea in general.)
+
+==== Implementation design
+
+Regarding implementation, I want to take the recently reworked DOC /
+DOCX filters as an example and implement the new RTF filter in a similar
+way - but of course heavily based on the current SwRTFWriter
+implementation.
+
+I don't know exact details, because I haven't (yet) read the RTF
+specification nor the relevant part of the OpenOffice API, but I expect
+to read and understand the code from the sw/source/filter/rtf directory
+and I want to place the new RTF code under sw/source/filter/ww8, where
+the DOC / DOCX one already is.
+
+I'm aware that it would be possible to use XSL transformations to create
+a new RTF filter as well, but not ignoring performance aspects and my
+(quite weak) XSLT knowledge, I decided to create a $$C++$$ filter.
+
+==== References
+
+* http://www.microsoft.com/downloads/details.aspx?FamilyId=DD422B8D-FF06-4207-B476-6B5396A18A2B&displaylang=en[RTF
+  official specification]
+* http://wiki.services.openoffice.org/wiki/Export_filter_framework[Article
+  about the export filter framework]
+
+=== Implementation timeline
+
+==== Milestones
+
+* Update the development environment to the dev300_mXX milestone on
+  which I will base my work, decide where do I publish my code, work out
+  other infrastructure details, finally start reading at least the
+  important parts of the RTF specification. (Till 2010.05.31.)
+
+* Understand how the already existing UNO based filters work while
+  continuing to read the specification. (Till 2010.06.07.)
+
+* Understand how the current RTF export filter works - at this point all
+  the important parts of the RTF specification should be read as well.
+  (Till 2010.06.14.)
+
+* Decide how do I test my code, possibly write testcases and/or work out
+  a mechanism to compare the output of the new filter to the output of
+  the old one. The more automated way, the better. Partly to ensure I do
+  not break anything, and partly to provide an objective method to measure
+  my progress. (Till 2010.06.21.)
+
+* Do the actual porting. At first round I want to reuse code from
+  SwRTFWriter where possible and reach a point where the new filter is
+  as much good as the old one was. (Till 2010.07.05.)
+
+* Review what was reached, if there are differences which are decided to
+  be good ones, document them. Decide what to work on next, etc.
+  (Till 2010.07.12.)
+
+* Fix bugs, fine-tune, update the code based on suggestions from other
+  OpenOffice developers, implement features from the specification if
+  time permits. (Till 2010.08.08.)
+
+So I would like the first version of the new RTF filter ready by the
+time of mid-term evaluation, then I can work out the minor problems,
+write documentation and if time permits - implement new features from
+the specification in the second half of the summer. I used concrete
+dates so that I can be checked easily if I'm on track, but of course I
+may finish with a given part a bit earlier or I may have a little delay.
+
+==== Exams, holidays, etc.
+
+I'm a student in Hungary, and here the exam period is between
+2010.05.25 and 2010.06.21.  Sadly this has a big overlap with the
+Summer of Code, which starts on 2010.05.24. I'm aware of this and last
+year I managed to get over this as well. I plan to work on my project 40
+hours a week, which permits to spend entire days on my project, then
+work nothing a few days before the exam.  I don't know the exact date,
+but probably after the mid-term evaluation I'll have a week of holiday.
+I think once I returned I can work more productive on my project with a
+fresh mind, compared to going nowhere during the whole summer.
+
+==== Communication
+
+My experience is that IRC is handy for quick questions, but basically
+the primary protocol is email. If this is OK for my mentor, then I would
+like to use these two for this project as well.
+
+==== Invested time before, during and after SoC
+
+I would like to start with trivial patches or minor bugfixes before the
+SoC starts, so when I start to work on my project, hopefully my name
+will not be unknown on the ooo-build list (right now I think I'm only
+known because of packaging issues, nothing else). I plan to work 40
+hours a week during the SoC. (Well, basically. I do not use a timer, the
+average is about something like this.) I don't know the future, I hope I
+can do some contribution after SoC as well.
+
+==== Future work
+
+I don't know anything about it so far, but I'm sure there will be new
+ideas during the implementation of the project. I'm sure I'll at least
+document these ideas once the project is finished, so I or others can
+work on them after the end of SoC.
+
+=== Relevant knowledge
+
+==== Experience of OpenOffice.org
+
+As every average Linux user - I'm using OpenOffice.org on a daily basis,
+to read/write/convert any non-ascii document. I must admit that I rarely
+write anything in Calc or Impress, but I use Writer for writing as well.
+
+So I'm familiar with OpenOffice as a user, but I did not contribute "real
+code" patches to ooo-build itself so far, not counting build bits.
+
+==== Experience in the project specific area
+
+I expect that I'll need to write $$C++$$ code during the project. I
+contributed to various projects written in that language, most notably I
+added
+http://google-opensource.blogspot.com/2009/11/swigs-second-summer-of-code.html[director
+support for PHP] to SWIG last summer, which was implemented in about 800
+lines of $$C++$$ code.
+
+==== Used toolchains and platforms
+
+I'm a Linux guy, I used OS X for a long time (but not currently), mainly
+for testing purposes as well. I do not really use Windows, but I have
+one installed in a virtual machine (can be useful when I want to see if
+MSO imports the RTF file I created :-) ).  I'm familiar with `gcc` and
+`make`, I used autotools for other projects previously as well. I'm
+familiar with `git` as well, but I knew quite little about OpenOffice's
+build system (dmake and friends).
+
+==== Recent interaction with the OpenOffice community
+
+I'm hanging around on #go-oo, and I'm subscribed to the ooo-build
+mailing list.
+
+=== About Me
+
+==== Where do I work/study and my interests
+
+Education: Completing an M.Sc. degree in Computer Science (since this
+year, February) at Budapest University of Technology and Economics. I
+work for SZTAKI (http://www.sztaki.hu/?en, part time - 1 day in a week,
+since 2004). I have a page with a few minor projects:
+http://vmiklos.hu/projects/
+
+==== Links
+
+A have a page with links to patches I contributed to other FOSS
+projects:  http://vmiklos.hu/portfolio/  Mostly minor code and/or
+documentation fixes. I contributed a few more complex patches to the
+pacman package manager, the bitlbee IM gateway, MPlayer, Git and SWIG
+(these are C and $$C++$$ projects).  I'm generally a bash,
+C/$$C++$$ and Python guy. I know some perl/Java/erlang/C# as well.
+
+==== IRC name
+
+vmiklos
+
+=== Link to Further Information
+
+http://www.freedesktop.org/wiki/Software/ooo-build/SummerOfCode/2010#ImproveRTFExport
+
+== My solution of the exercise
+
+Goal:
+
+[quote]
+____
+find the code that handles the keyboard shortcuts, and swap the
+behaviour of Ctrl-S and Ctrl-N - note that we want a c++ code change, no
+change in the xml configuration files
+____
+
+My solution:
+
+[source,diff]
+----
+diff --git a/framework/source/accelerators/acceleratorconfiguration.cxx b/framework/source/accelerators/acceleratorconfiguration.cxx
+index 37de076..9b9d2b9 100644
+--- a/framework/source/accelerators/acceleratorconfiguration.cxx
++++ b/framework/source/accelerators/acceleratorconfiguration.cxx
+@@ -756,7 +756,15 @@ css::uno::Sequence< css::awt::KeyEvent > SAL_CALL XCUBasedAcceleratorConfigurati
+         static_cast< ::cppu::OWeakObject* >(this));
+ 
+     if (rPrimaryCache.hasKey(aKeyEvent))
+-        return rPrimaryCache.getCommandByKey(aKeyEvent);
++    {
++        // vmiklos: swap the behaviour of Ctrl-S and Ctrl-N
++        ::rtl::OUString command = rPrimaryCache.getCommandByKey(aKeyEvent);
++        if (!command.compareToAscii(".uno:AddDirect"))
++            return ::rtl::OUString::createFromAscii(".uno:Save");
++        if (!command.compareToAscii(".uno:Save"))
++            return ::rtl::OUString::createFromAscii(".uno:AddDirect");
++        return command;
++    }
+     else
+         return rSecondaryCache.getCommandByKey(aKeyEvent);
+ 
+----
+
+== Additional resources
+
+- http://vmiklos.hu/gitweb/?p=gsoc2010.git;a=summary[gitweb]
+- link:Miklos_Vajna.tar.gz[patches tarball]
+- link:gsoc-2k1o.txt[application source]
+
+== References
+
+- http://cedric.bosdonnat.free.fr/wordpress/?p=697[Go-oo GSoc 2010
+  wrap-up]
+- http://hg.services.openoffice.org/DEV300/rev/5a2d87e7a414[OpenOffice.org
+  integration commit]

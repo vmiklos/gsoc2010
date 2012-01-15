@@ -1,0 +1,70 @@
+= Misc notes
+
+NOTE: The notes here are not about to show how horrible working on OOo is -
+quite the opposite: it's a great adventure, due to the ackward APIs you have to
+figure out. ;)
+
+== 2010-06-30
+
+MediaDescriptor::PROP_STREAMFOROUTPUT() is to get an output stream, but you need +
+MediaDescriptor::PROP_INPUTSTREAM() to get an input stream.
+
+http://svn.services.openoffice.org/opengrok/xref/OOO320_m19/oox/source/core/filterbase.cxx
+
+== 2010-07-01
+
+Regarding some sphaghetti code in OOo, especially the german comments:
+
+14:44 < cbosdonnat> vmiklos, the german comments are the bolognese sauce to help us eat the spaghetti :)
+
+== 2010-07-02
+
+While you read or write files, you work with streams, which in practice an
+SvStream reference. It has operators and methods to write to or read from the
+stream. Now if you want to pass this to an uno function, you need to wrap it.
+The name of the wrappers:
+
+utl::OStreamWrapper() (to wrap it) +
+utl::UcbStreamHelper::CreateStream() (to unwrap it)
+
+== 2010-07-06
+
+So there are two related concepts: footer and header. It's quite intuitive to
+create a base class for them and add a boolean flag if it's a footer or header;
+or maybe create two subclasses. Now see how it's done in OOo:
+
+class SW_DLLPUBLIC SwFmtHeader: public SfxPoolItem, public SwClient {...} +
+class SW_DLLPUBLIC SwFmtFooter: public SfxPoolItem, public SwClient {...}
+
+so yes, their IsActive() method is duplicated.
+
+== 2010-07-07
+
+You have two callbacks, they are called if a given property of the text
+changed. A simple implementation of this would be a 'propertyChanged(string name,
+bool newValue)'-like function. Now let's see how OOo does this:
+
+----
+// property: bold
+void CharWeight( const SvxWeightItem& rWeight )
+{
+    if ( rWeight.GetWeight() != WEIGHT_BOLD )
+        /* the property is now false */
+}
+
+// property: italic
+void CharPosture( const SvxPostureItem& rPosture )
+{
+    if ( rPosture.GetPosture() != ITALIC_NORMAL )
+        /* the property is now false */
+}
+----
+
+to make it worse, the "true" values are WEIGHT_NORMAL and ITALIC_NONE, so the
+_NORMAL suffix may mean true and false as well.
+
+== 2010-07-08
+
+http://svn.services.openoffice.org/opengrok/xref/Current%20%28trunk%29/sw/source/filter/rtf/rtfatr.cxx#1528
+
+That missing break in the switch makes OOo not export graphics only in PNG, so Wordpad can't open it...

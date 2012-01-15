@@ -1,0 +1,1567 @@
+= GSoC Diary
+
+== 2010-05-16
+
+Minor progress:
+
+- downloaded the doc / docx standards (I already had the rtf one)
+- installed winxp + office2007 in vmware to be able to test rtf files with ms
+  office
+
+== 2010-05-17
+
+Discussed that currently there is no testsuite for the RTF exporter, so I took
+the repo with existing test files and pushed out a clone of the repo:
+
+http://cgit.freedesktop.org/~vmiklos/ooo-test-files/
+
+There I added a test script that can record a good rtf conversion and then
+compare current conversion results against the recorded one, using
+jodconverter.
+
+The trick is that it does not starts its own OOo server, so I can start the
+hacking version easily, using:
+
+----
+./soffice.bin -headless -accept="socket,port=8100;urp;" -nologo
+----
+
+I also started upgrading to ooo320-m17 (from ooo320-m12) but the build did not
+finish till the evening.
+
+Read documentation:
+
+- http://wiki.services.openoffice.org/wiki/Export_filter_framework
+
+Started to read sw/source/filter/ww8/docx* but most of it is Chinese, I need to
+read more docs before I can understand it.
+
+== 2010-05-18
+
+No coding today, but the m17 buid finished (in total it took about 14 hours on
+my notebook) and I imported the `filter` and `sw` dirs to git, and pushed it
+out to:
+
+http://cgit.freedesktop.org/~vmiklos/ooo320-m17-gsoc/
+
+(The link is probably not yet working as the cron job did not find the new
+repo.)
+
+So I can push incremental updates there and the big patch (or patches) can go
+to the Experimental section of ooo-build's master (which seems to be a mess
+right now, they are updating from m17 to something devel).
+
+Read documentation:
+
+- doc/sw.txt
+- doc/sw-flr.otl
+
+From http://wiki.services.openoffice.org/wiki/Category:Writer/CoreDoc :
+
+- http://wiki.services.openoffice.org/wiki/Writer/Core_And_Layout
+- http://wiki.services.openoffice.org/wiki/Writer/Text_Formatting
+
+The way Writer works is not a bit more clear, so it looks like a good
+direction: read doc, try to read code, if something is totally unclear, then
+google for it (site:openoffice.org), read relevant doc from the wiki, try
+reading the code again, etc.
+
+Oh, and I also started this diary, before I forget what did I do on given days
+(and I tried to reconstruct the last two days as well).
+
+To sum up, I still find the docx exporter code quite complex, but I think after
+reading enough documentation, I'll get it. :)
+
+Questions:
+
+- For internal filters, where is the filter class (SwRTFWriter) registered?
+
+- The rtf dir contains an RtfReader class as well, so looks like the
+  sw/source/filter/rtf dir contains an rtf importer as well, which one I should
+  not touch?
+
+- I tried to see how the doc (WW8Export) and the docx (DocxExport) exporters
+  are registered. For docx, I see a the register functions at the bottom of
+  docxexportfilter.cxx, but where is WW8Export registered?
+
+== 2010-05-22
+
+One more question: as far as I could split the coding part to two big tasks:
+
+1) Make the RTF exporter an UNO component.
+
+2) Make the UNO component use MSWordExportBase.
+
+Am I right about separating the two tasks would be a good idea?
+
+== 2010-06-01
+
+After disabling the old export filter, I get:
+
+----
+Exception in thread "main" com.artofsolving.jodconverter.openoffice.connection.OpenOfficeException: conversion failed: could not save output document; OOo errorCode: 2074
+        at com.artofsolving.jodconverter.openoffice.converter.OpenOfficeDocumentConverter.loadAndExport(OpenOfficeDocumentConverter.java:142)
+----
+
+IOW I think that means "no export filter available for this format".
+
+<<<
+
+I added a new XCU for the uni exporter, and this way I no longer get an error,
+though instead of crying about there is no UNO-based RTF exporter, it just
+happily uses the DOCX one. ;)
+
+To test the export filter I use:
+
+----
+~/git/ooo-build/build$ (cd install/program; ./soffice.bin -headless -accept="socket,port=8100;urp;" -nologo)
+~/git/gsoc/ooo-test-files/writer$ ./test.sh --test hello.odt
+----
+
+From: http://cgit.freedesktop.org/~vmiklos/ooo-test-files/
+
+(I first ran --record with the system OOo which still has the rtf exporter.)
+
+<<<
+
+I figured out a little about UNO components. So they have three important functions (which is called using dlopen()):
+
+* component_getImplementationEnvironment - this isn't interesting, looks like it's copy&pasted every time..
+* component_writeInfo - this declares the provided services, not sure if registering multiple services is ok?
+* component_getFactory - this is called with a string parameter which determines the factory of what service should be returned
+
+The problem currently is that I try to register both the DOCX and the RTF
+service in component_writeInfo, but component_getFactory is only called for
+DOCX. I guess that's because regcomp is not invoked which would use the
+component_writeInfo() function..
+
+<<<
+
+Poked a bit more the DOC / DOCX exporter. So the DOCX one is an uno component, that's clear:
+
+DocxExportFilter is inherited from oox::core::XmlFilterBase, but
+DocxExportFilter::exportDocument() calls DocxExport::aExport.ExportDocument(),
+where DocxExport is inherited from MSWordExportBase.
+
+Now let's see the DOC one:
+
+SwWW8Writer is the actual exporter, it's inherited from StgWriter (looks like
+it isn't an uno component at all, despite of what I thought earlier). It calls
+WW8Export::ExportDocument(), where WW8Export is inherited from MSWordExportBase
+as well.
+
+<<<
+
+A bit more info about the RtfExport registration:
+
+----
+~/git/ooo-build/build/install$ ure/bin/regview basis3.2/program/services.rdb|grep Docx
+   / com.sun.star.comp.Writer.DocxExport
+                   12 = "com.sun.star.comp.Writer.DocxExport"
+~/git/ooo-build/build/install$ ure/bin/regview basis3.2/program/services.rdb|grep Rtf 
+   / com.sun.star.comp.Writer.RtfExport
+                   11 = "com.sun.star.comp.Writer.RtfExport"
+----
+
+So looks like it's properly registered, but for some reason
+component_getFactory() isn't called with a com.sun.star.comp.Writer.RtfExport
+at all. Next tip: maybe need to search where it's decided what component is
+used for the RTF export?
+
+I would expect that component_getFactory() is called with
+com.sun.star.comp.Writer.RtfExport as well, then given that I don't give back a
+factory, I would get a failure. But somehow we don't reach that status yet.
+
+== 2010-06-02
+
+In short the problem (based on IRC discussion) is that WriterFilter is
+DOCX-only, I need to create a similar RtfFilter that can invoke my RtfExport
+service in its filter() method.
+
+<<<
+
+Created a simple RtfFilter in the writerfilter module that basically just
+invokes the RtfExport component. Now the next step is to make
+component_getFactory() in docxexportfilter.cxx handle
+com.sun.star.comp.Writer.RtfExport.
+
+== 2010-06-03
+
+Created a simple RtfExportFilter, though I'm quite unsure about a few points:
+
+- DocxExportFilter is inherited from oox::core::XmlFilterBase, as it needs the
+  xml/zip functions there. Given that RTF is basically plain text, I don't need
+  that, so I used cppu::WeakImplHelper. I'm mostly sure about that's a good
+  decision.
+
+- RtfFilter's constructor takes an XComponentContext, which is used in
+  RtfFilter::filter() to get an XMultiServiceFactory. OTOH RtfExportFilter's
+  constructor takes directly a XMultiServiceFactory. (It's because RtfFilter is
+  registered using ::cppu::component_getFactoryHelper(), while RtfExportFilter is
+  registered "manually".) I hope this difference won't cause problems in the
+  future.
+
+[ At http://wiki.services.openoffice.org/wiki/Documentation/DevGuide/ProUNO/C++/Transparent_Use_of_Office_UNO_Components
+I read that ::cppu::bootstrap() can be used to create an XComponentContext
+anytime, so looks like this isn't a big issue in fact. ]
+
+- RtfExportFilter::filter() is just a stub right now, so the exported document
+  is always empty. ;) Obviously the next step is to write an RtfExport
+  skeleton, so that I can call RtfExport.ExportDocument() in
+  RtfExportFilter::filter(). OTOH I don't understand why
+  DocxExportFilter::exportDocument() bothers with SwPaM at all, if the comment
+  says we export the whole document anyway. Is it just a broken attempt and I can
+  ignore it?
+
+So I'm some things are a bit unclear, though I think RtfExportFilter should be
+mostly fine. If there are no objections, I want to create an RtfExport skeleton
+(the one that is inherited from MSWordExportBase) tomorrow.
+
+== 2010-06-04
+
+RtfExportFilter::filter() is almost ready.
+
+Talked with Cedric about a pretty-printer, looks like that the following strategy works:
+
+- insert a newline before a {
+- } go to separate lines
+- insert a newline after ;
+
+hello.prettyprint-try2.rtf is formatted like this manually, but writing a
+script that does this automatically should not be hard.
+
+It's important that there should be no newline *after* a { and indenting
+(inserting spaces or tabs) is problematic as well.
+
+== 2010-06-06
+
+Added prettyprint.py to the ooo-test-files git repo.
+
+== 2010-06-07
+
+Before I forget it, the ooo-build version and configure flags I use:
+
+----
+$ git describe
+OOO_BUILD_3_2_1_1-5-gf130a00
+$ ./configure --with-distro=Frugalware --with-gcc-speedup=ccache --disable-odk --disable-strip --disable-mono
+----
+
+Another feature: while I write the skeleton, I regularly just need to add todo
+printfs to the code, and I hate repeating that a lot of times. So I googled a
+bit for a script that shows the current function name, then modified to my
+needs:
+
+----
+fun FunctionName()
+    " search backwards for our magic regex that works most of the time
+    let flags = "bn"
+    let fNum = search('^\w\+\s\+\w\+.*\n*\s*[(){:].*[,)]*\s*$', flags)
+    " if we're in a python file, search backwards for the most recent def: or
+    " class: declaration
+    if match(expand("%:t"), ".py") != -1
+        let dNum = search('^\s\+def\s*.*:\s*$', flags)
+        let cNum = search('^\s*class\s.*:\s*$', flags)
+        if dNum > cNum
+            let fNum = dNum
+        else
+            let fNum = cNum
+        endif
+    endif
+
+    "paste the matching line into a variable to display
+    let tempstring = getline(fNum)
+    let items = split(tempstring, '(')
+    let items2 = split(items[0], ' ')
+
+    "return the line that we found to be the function name
+    execute "normal a \<BS>". "\nprintf(\"debug, TODO: " . items2[1] . "\\n\");"
+endfun
+
+map <F10> :call FunctionName()<CR>
+----
+
+This quick & dirty code allows me to just position on the '{' of a function and
+press F10 to insert the todo printf. :)
+
+<<<
+
+I'm ready with a skeleton of the RtfExport and RtfAttributeOutput. I'm a bit
+unsure about the later, as I don't yet see where it will be used, but seeing
+how many methods does it have, I'm almost sure about I'll need it for the RTF
+export as well. ;)
+
+The test conversion now ends with:
+
+----
+debug, TODO: RtfExport::ExportDocument_Impl
+----
+
+so I have the first method to implement in the RtfExport class, I guess. ;)
+
+<<<
+
+Started to write it. I saw in the old exporter that a Strm() function returned
+a handy reference to the output, I spent a lot of time with figuring out the
+right API to implement this feature within the RtfExport class and I hope I got
+it right - at least it seems to work. :)
+
+== 2010-06-08
+
+It turned out Strm() is not enough, I needed functions to print numbers as
+text, etc - so I added a dummy RtfWriter class, just to use its OutULong()
+method (and prossibly more in the future, I think I'll need the same for hex
+numbers as well).
+
+Then I continued yesterday's work to produce correct output for a helloworld
+odt file. Given that I just implement callbacks and I do not access the
+document model directly, the output is not 100% the same, but it's similar
+enough that diffing it to the old output makes sense.
+
+So far the output should be theoretically fine till the end of the font table.
+(Sadly I really can test it once the full helloworld output is there.)
+
+Technically that was about implementing methods in the RtfAttributeOutput
+class, but sadly the font part is not that generic, there are explicit support
+for it in wwFont and wwFontHelper, so I just added two methods to handle RTF as
+well.
+
+The next items: the color table, the stylesheet and the info groups.
+
+== 2010-06-09
+
+The color table is ready.
+
+Doh, it took some time till I found OutRTF_SwAdjust() in the old exporter, as
+it does *not* use the OOO_STRING_SVTOOLS_RTF_QL, OOO_STRING_SVTOOLS_RTF_QR, etc
+constants...
+
+Anyway the style table is still in progress, some commands are there, some are
+not yet. It's quite boring, so in the meantime I implemented default tabstop
+handling.
+
+Stay tuned...
+
+<<<
+
+Important concept! A 'run' is part of a paragraph. I did not figure out what
+does it mean and finally Kendy explained. So the plain text can't have
+properties, but sometimes you need different type of text inside a paragraph.
+In that case you can create two runs and set the wished first and second set of
+properties on the runs and you'll get what you want. :)
+
+An other concept: Ruby. It's something about Asian text, not important yet.
+
+<<<
+
+To keep things simple, I pushed the master branch of ooo-test-files.git to
+ooo320-m17-gsoc.git (branch name: ooo-test-files) and deleted
+ooo-test-files.git, so that in case someone is interested in my GSoC work, he
+just needs to clone a single repo.
+
+<<<
+
+Woho, now that the implementation of RtfAttributeOutput::RunText is there, the
+output for hello.odt is something OOo can open. ;)
+
+OTOH I must add that the output is far from perfect, I still diff the output of
+the old filter for hello.odt and there are still stuff to implement (even for
+helloworld): the info group, the stylesheet group is just partially
+implemented, etc.
+
+== 2010-06-11
+
+The info group is ready!
+
+Worked a bit on the paragraph / run part, it needed some tweaking as the call
+order is like this:
+
+----
+RtfAttributeOutput::StartParagraph
+RtfAttributeOutput::StartRun
+RtfAttributeOutput::RunText
+RtfAttributeOutput::StartRunProperties
+RtfAttributeOutput::RTLAndCJKState
+RtfAttributeOutput::EndRunProperties
+RtfAttributeOutput::EndRun
+RtfAttributeOutput::StartParagraphProperties
+RtfAttributeOutput::ParagraphStyle
+RtfAttributeOutput::EndParagraphProperties
+RtfAttributeOutput::EndParagraph
+----
+
+and what I would need is:
+
+----
+RtfAttributeOutput::StartParagraph
+RtfAttributeOutput::StartParagraphProperties
+RtfAttributeOutput::ParagraphStyle
+RtfAttributeOutput::EndParagraphProperties
+RtfAttributeOutput::StartRun
+RtfAttributeOutput::StartRunProperties
+RtfAttributeOutput::RTLAndCJKState
+RtfAttributeOutput::EndRunProperties
+RtfAttributeOutput::RunText
+RtfAttributeOutput::EndRun
+RtfAttributeOutput::EndParagraph
+----
+
+but it can be worked around using two OStringBuffers.
+
+Worked a lot on various style issues, see the git log, nothing major to name.
+
+And I started the page description table, but got stuck - old exporter emits this:
+
+----
+{\*\pgdsctbl
+{\pgdsc0\pgdscuse195\pgwsxn11906\pghsxn16838\marglsxn1134\margrsxn1134\margtsxn1134\margbsxn1134\pgdscnxt0 Standard;
+}
+}
+----
+
+Now either I'm blind or this is something very interesting, as I can't find
+pgdsc in the RTF spec (version 1.9.1). ;) Is this page description stuff
+OOo-specific? Should I implement this in the new filter as well, or may I
+ignore?
+
+== 2010-06-13
+
+I usually just hibernate all the time, but today I restarted my box and wasted
+a lot of time why the headless server segfaults when the test script connects
+to it. Finally I found the solution: that's the "error message" when I forget
+to `. ooenv` before `./soffice.bin`. ;)
+
+Other than that, I implemented RtfAttributeOutput::ParaAdjust().
+
+Googled a bit for pgdsctbl, but all results seem to point to RTF files
+generated by OOo. Maybe OOo has some docs for those commands?
+
+== 2010-06-14
+
+First, Cedric suggested to ignore the `\pgdsctbl` issue for now. It is
+OOo-specific and probably not really documented.
+
+Second, I noticed that when there is a line break (shift-return) in the
+RunText, then `^K` is in the output rtf. We are trying to figure out why isn't
+that a `\n`.
+
+Third, once it's a `\n`, we could use RTFOutFuncs::Out_String to do the proper
+escaping, but so far I was unable to figure out how to use it properly, as this
+won't work:
+
+----
+diff --git a/sw/source/filter/ww8/rtfattributeoutput.cxx b/sw/source/filter/ww8/rtfattributeoutput.cxx
+index d96a08e..dd478b1 100644
+--- a/sw/source/filter/ww8/rtfattributeoutput.cxx
++++ b/sw/source/filter/ww8/rtfattributeoutput.cxx
+@@ -44,6 +44,7 @@
+ 
+ #include <svtools/poolitem.hxx>
+ #include <svtools/rtfkeywd.hxx>
++#include <svtools/rtfout.hxx>
+ 
+ #include <svx/fontitem.hxx>
+ #include <svx/tstpitem.hxx>
+@@ -235,7 +236,11 @@ void RtfAttributeOutput::EndRunProperties( const SwRedlineData* /*pRedlineData*/
+ void RtfAttributeOutput::RunText( const String& rText, rtl_TextEncoding eCharSet )
+ {
+ 	printf("debug, RtfAttributeOutput::RunText\n");
+-	m_aRunText.append(OUStringToOString( OUString( rText ), eCharSet ));
++	//m_aRunText.append(OUStringToOString( OUString( rText ), eCharSet ));
++	SvMemoryStream* pStream = new SvMemoryStream;
++	RTFOutFuncs::Out_String(*pStream, rText, eCharSet, FALSE);
++	m_aRunText.append(reinterpret_cast< const sal_Char*>(pStream->GetData()));
++	delete pStream;
+ }
+ 
+ void RtfAttributeOutput::RawText( const String& /*rText*/, bool /*bForceUnicode*/, rtl_TextEncoding /*eCharSet*/ )
+----
+
+Also tried using GetSize(), but I still get some garbage at the end. :/
+
+Cedric pointed out a fourth problem: currently the import and the export
+filters are separate ones, so save as doesn't work, even if you can export and
+open rtf files. Just changing the export filter's name from "Ritch Text Format"
+to "Ritch Text Format" doesn't help and additionally it breaks my test.sh, so I
+just add it to my local TODO for now.
+
+On the bright side:
+
+- Various minor fixes here and there
+- Finished the style table (fonts, inheritance)
+- Implemented CharPosture, CharWeight and FormatLRSpace (html <i>, <b> and
+  horizontal indentation), so that I could test (and fix) the handling of
+  paragraph and run properties.
+
+In the evening, I wrote a little script to generate an RSS feed for this diary,
+suitable for GO-OO Planet.
+
+I also tried getting ASSERT() to work, but looks like just rebuilding the `sw`
+module with `debug=t` won't be enough.
+
+== 2010-06-15
+
+As suggested by Kendy, I should use OSL_ASSERT(), and that's *not* a noop with
+`debug=t`. ;)
+
+Added code to emit the style properties after the application of the style, as
+suggested by the spec (page 26).
+
+Wasted 2 hours trying to figure out why `SV_DECL_OBJARR` / `SV_IMPL_OBJARR`
+segfaults for OUString, then Cedric suggested to just use STL for the task.
+After changing the code to use `std::map`, it works fine. If I were at it, I
+converted the color table as well.
+
+Figured out why the default language was Hindi for a hello world, worked around
+for now (see the comment in `RtfAttributeOutput::CharLanguage()`).
+
+Finally I found the code that turns `\n` to $$^K$$:
+link:http://svn.services.openoffice.org/opengrok/xref/Current%20%28trunk%29/sw/source/filter/ww8/wrtw8nds.cxx#1461[SwAttrIter::GetSnippet()]
+does these replacements.
+
+Now that I know the full list what replacements are done, it won't be hard to
+adapt RTFOutFuncs::Out_String to the output of this function. ;)
+
+== 2010-06-16
+
+I had to teach the pretty-printer not to insert newlines for `{` and `}` in
+case they are escaped using `\`, as `\<whitespace>{` does not equal to `\{`,
+practically damaging the escape mechanism.
+
+Added support for escaping special chars (ie everything which is not ascii)
+using `\'XX` where XX is a hex number. This makes accents almost work, though
+right now looks like latin2 accents are exported as latin1 ones, so something is
+problematic with the encoding handling.
+
+Today I discovered `OSL_ENSURE`, the macro I searched for. It's like `ASSERT`
+which allows you to pass an additional message next to the condition and it's
+like `OSL_ASSERT` which is enabled in product builds as well (when
+`OSL_DEBUG_LEVEL > 0`).
+
+Found a big problem: I thought `maFontHelper.WriteFontTable()` writes all the
+fonts, but in fact it writes only the current state of the table, and the table
+is built while processing the document. OTOH the font table should be printed
+in the header of the document, you can't define fonts later. So now we have to
+figure out what's an efficient way to handle this problem. A more or less
+trivial method is to buffer the document text, but I'm not yet sure that's the
+way to go...
+
+A related question: here is a
+link:$$http://cgit.freedesktop.org/~vmiklos/ooo320-m17-gsoc/plain/test.cc?h=diary$$[test
+program], It'll obviously print out `A::func` in the middle line. How can I
+change the program to output `Ad::func`? A trivial solution is to copy&paste
+`B::func` to `Bd::func` (and make `B::func` virtual), but that's ugly. What's a
+nice solution? (BTW in Python this example
+link:$$http://cgit.freedesktop.org/~vmiklos/ooo320-m17-gsoc/plain/test.py?h=diary$$[prints]
+`Ad::func`.)
+
+The
+link:http://cgit.freedesktop.org/~vmiklos/ooo320-m17-gsoc/diff/?id=c3f06337cd46ba1a359e896e38fb711073fc4391&id2=cbbe5d0407e4db26e61a4127df68356455a8b0d6[solution]
+for the font table problem for now is to alter wwFontHelper::InitFontTable,
+_ideally_ this does not change the doc/docx output, since these fonts are added
+later anyway and at least the docx exporter reads the table at the end only. (I
+tried subclassing `wwFontHelper`, but I hit the issue in the previous
+paragraph, so I gave it up for now.)
+
+Implemented `RtfAttributeOutput::CharUnderline()`, looks like the color is
+always set to black, though. Also implemented a few other character properties
+where there were no such problems.
+
+The last problem for today is that for example
+`RtfAttributeOutput::CharBackground` requests color ids too late - the problem
+is similar to the font one, and I'm sure I'll find out something to fix this as
+well. ;)
+
+== 2010-06-18
+
+A solution for the problem mentioned on 16th is to use pointers:
+
+----
+20:15 <@kendy> vmiklos: To solve your problem, you want to have A *a; as the
+               variable (defined only in B), and in B's constructor, you'd have B::B() : a(
+               new A() ) {}, and in Bd's contructor, you'd have Bd::Bd() : a( new Ad() ) {}.
+20:16 <@kendy> vmiklos: Or something similar to this ;-)
+20:17 <@kendy> vmiklos: Of course, details depend on what you really want to
+               achieve ;-)
+----
+
+Finally managed to fix the color table issues, now all used colors are in the
+table. (The problem was the same as with the font table, there were inserted
+too late.)
+
+Implemented character attributes which were not in the old exporter:
+
+- blinking (though it's not imported, either, so you need Word to see it)
+- expanded spacing (you can test this in OOo as the importer already handles this)
+- pair kerning (same, the OOo importer handles this fine)
+
+After that I implemented the remaining character attributes, so they are now all ready!
+
+And I found a nice typo
+http://svn.services.openoffice.org/opengrok/xref/Current%20%28trunk%29/sw/source/filter/rtf/rtfatr.cxx#2291[here].
+;)
+
+I again learned
+link:$$http://cgit.freedesktop.org/~vmiklos/ooo320-m17-gsoc/plain/test2.cc?h=diary$$[something]
+about $$C++$$. I thought this code would work. In practice luckily I could just
+rename the method of the inherited class.
+
+Regarding paragraph attributes, implemented vertical aligning.
+
+I want to continue implementing paragraph attributes on Monday.
+
+== 2010-06-21
+
+It turned out that the typo I found was a copy&paste:
+
+----
+~/git/ooo-build/src/clone/writer$ git grep 'cEnd.*GetStart'
+sw/source/filter/rtf/rtfatr.cxx:        sal_Unicode cEnd = ((SvxTwoLinesItem&)rHt).GetStartBracket();
+sw/source/filter/ww8/ww8atr.cxx:        sal_Unicode cEnd = rTwoLines.GetStartBracket();
+----
+
+So I now fixed that one as well - for now only in my repo, as suggested by Kendy.
+
+Another cryptic error message:
+
+----
+Exception in thread "main" com.artofsolving.jodconverter.openoffice.connection.OpenOfficeException: conversion failed: could not save output document; OOo errorCode: 283
+----
+
+That means: the file is locked, try `rm .~lock.foo.rtf#`. In general, if the
+console conversion fails with a weird error code, then it looks like it worths
+using the GUI where one gets a more or less usable error message. :)
+
+Implemented three methods to export hyperlinks properly. Sadly looks like that
+the OOo importer is somewhat buggy here: it imports the text of the hyperlink
+twice. But this is the case with the old exporter as well and Word imports it
+fine, so probably I should not care... (Reproducible with the charprops.odt
+file from the ooo-test-files branch.)
+
+Back to paragraph attributes, I implemented paragraph borders. Something is
+strange about it, my test document (parprops.odt in the ooo-test-files-branch)
+is exported in a way by the older filter that the import filter just ignores
+the paragraph with borders + everything after that paragraph. OTOH it just
+parses the output of the new filter without any problem - and I did not do any
+trick intentionally... (Both output files can be opened in Word fine.)
+
+Implemented various tabstop types (align left/right/centered; different fill
+characters).
+
+Created a test document for various numbering cases, but I did not start
+implementing it.
+
+== 2010-06-22
+
+Learned something about gdb: if you have a function like this:
+
+----
+USHORT MSWordExportBase::GetId( const SwNumRule& rNumRule )
+----
+
+you need to use the following form to set a breakpoint:
+
+----
+break MSWordExportBase::GetId(SwNumRule const&)
+----
+
+ie. it won't work without moving const after the class name.
+
+Spent the whole day with working on numberings, the first goal is to properly
+export a document with a simple bullet list of two lines. This is now there,
+though the character code of the bullets was screwed up by
+`MSWordExportBase::SubstituteBullet()`. That substitution is not needed for RTF
+at all, and it took a while till I figured out that's the function causing the
+problem. ;)
+
+== 2010-06-23
+
+Added support for the rest of the numbering types: "none" and "numbered".
+
+Added support for "as character" pictures. Then I tried to add support for
+"linked to paragraph" ones as well, but that's not that easy.
+
+I wasted 2 hours till I found that MSWordExportBase::OutputFormat() - when the
+argument is a SwFrmFmt - is a noop as long as the public mpParentFrame is not
+set. There is an ASSERT() for this BTW, but given that this I'm working with a
+product build (with debug enabled), I did not notice it...
+
+But at the end I got "anchor to paragraph" working as well. :)
+
+During the evening I updated the test script in the ooo-test-files branch. In
+fact it wasn't useful in its current form as it's expected that the output
+won't be exactly the same as the output of the old filter. (I mean the RTF
+"source" output. The visual output should be the same.) So I changed it to just
+check the converter return code (in case the filter would crash or hang), then
+the results have to be compared manually (by opening the reference and the rtf
+output). I'm not exactly happy with this, but at least now I can check 40 docs
+with one command if I want to stress-test the filter. In case somebody has a
+good idea on how this could be improved to turn the testing fully automated,
+I'm quite interested. Maybe compare manually, when it's OK copy the "new" RTF
+and diff against it? Hmm...
+
+(To sum up: it's useful as I can test the filter without any mouse clicks and
+it can check for a hang or segfault, but I would like to automate the "open it
+manually and make sure it really looks like a bullet list" part as well, if
+possible.)
+
+Other than that, the next step - I think - is probably to start implementing
+support for tables.
+
+== 2010-06-25
+
+Worked on font alternate names, that's used for numberings.
+
+As suggested by Kendy, I added `set shiftwidth=4 expandtab` modelines. I wanted to make sure that I did not add new lines containing tabs, but it turned out that a simple `grep '\t'` won't do it, I needed:
+
+----
+$ git diff upstream..|grep $'^+.*\t'
+----
+
+(man bash, QUOTING explains the reasons.)
+
+Then I read the table definition part of the RTF spec. The most important details:
+
+- no table group, tables are paragraph properties...
+- row: start: `\trowd`, end: `\row`
+- if a paragraph is part of a table, i must have `\intbl`
+- end of a cell: `\cell`
+
+Worked a lot to get something usable, output a minimal code where OOo shows a
+table. Sadly it isn't trivial since `\trowd` (where d stands for default) isn't
+enough, you still have to specify a lot of property - unlike HTML. So now it
+shows a table, but the border properties are missing, and also it'll be wider
+than the right margin, since page properties are not written yet, either.
+
+From these two issues I implemented table borders, I'll start with the other
+one on Monday.
+
+== 2010-06-28
+
+I had a look at ooconvwatch, after some tweaking it works here, currently all
+tests fail because of the lack of page properties.
+
+Implemented page properties, so the current table.odt export has the equal
+output.
+
+Dived into nested tables: according to the spec they are supported by RTF
+(since Word 2000), but the OOo import/export filter does not really handle
+them. So the output has to be tested with Word. Also I need to add new
+keywords, so I had to import the svtools module in my gsoc repo.
+
+The relevant parts from the spec:
+
+- row start: no explicit start, end: `\nestrow`, inside a `\nesttableprops` group
+- `\itapN` after `\intbl` (starts from 2 as 0 is the document and 1 is the normal table)
+- end of a nested cell: `\nestcell` instead of `\cell`
+- the previous `\trowd` moves to the `\nesttableprops` group
+
+(The non-relevant ones are
+http://diaryproducts.net/for/geek/microsoft_rtf_specification_nightmare[here].
+;) )
+
+To make sure I above is true, I first hand-edited table.rtf (exported from
+table.odt, ooo-test-files branch) based on the above rules and tested it with
+Word. Once I got the expected the output (expected: same as the one I got when
+opened table.doc in Word), I was sure about the rules are right and implemented
+them.
+
+Had a look at spans:
+
+- horizontal ones: import/export worked
+- vertical ones: only export worked
+
+Regarding my filter: horizontal spans started to work out of the box after I
+wrote table definitions for each row. Then I just had to insert two control
+words to make vertical spans work as well.
+
+== 2010-06-29
+
+Fixed a bug where the exporter crashed in case the table had rows after the
+cell containing a nested cell.
+
+Added support for having multiple paragraphs in a cell. (Till now `\par` control
+words were just not written when we were in a cell, now the necessary ones are
+there.)
+
+Implemented more table properties:
+
+- cell background
+- cell height
+- cell vertical alignment
+- cell text direction
+- "is cell split allowed?"
+
+== 2010-06-30
+
+Finished tables - there may be bugs or missing features, but at least I no
+longer have table-related TODO items in the RtfAttributeOutput class.
+
+Then worked on the filter configuration, created a new config so that open/save
+as used the old filter an export used the new one. When I was ready with this,
+we discuss with Cedric that this is not the way to go, I can modify the
+existing filter config to use the RtfFilter UNO service, but I also need to let
+RtfFilter call the old export filter. To make it a bit harder, the builtin rtf
+reader can't be called from the writerfilter module, so I need to create a new
+RtfImport service in the sw module and call it from writerfilter. First I
+implemented the writerfilter part of this, then created an RtfImportFilter
+component, its filter() does not do anything yet.
+
+I spent some time while I found why my new UNO component (RtfImportFilter) was
+not called. I remember I had this problem with the RtfExportFilter but
+searching back in the diary did not help, I did not document the solution. So
+the reason is that there is some kind of service registry and that's not
+updated by `build` or `deliver`. For now I just used `rm -rf build/install;
+make dev-install`, though probably there is a command to just do that instead
+of a whole reinstall.
+
+OK, so once the component is actually called, let's see how can I tell it to
+use the builtin rtf importer?
+
+The question sounded easy, but so far I don't have a solution for it.
+
+I see that SfxObjectShell::DoLoad decides if the filter needs to be handled as
+a builtin one (using ConvertFrom()) or as an uno one (using ImportFrom()).
+Technically it's also possible to build an SfxMedium instance, as even if it's
+not passed directly to the uno filter, SwFilterDetect::detect() is a good
+example for this. OTOH it's not clear at all if I use
+SfxObjectShell::ImportFrom(), that will do what I want. Also, if I just pass it
+the SfxObject then it'll segfault as some of its properties are not properly
+initialized... To sum up, this sounds like the bad path.
+
+A better approach, suggested by Cedric, is to keep both filters, the uno import
+could call directly the builtin import (without type detection, to avoid an
+infinite loop). I like this idea, but it seems somehow always the builtin
+filter is called, even in case I moved the PREFERRED flag from the builtin one
+to the uno one.
+
+And of course when this is done, it's a question how do we hide the old filter
+from the UI, but that's not yet a problem.
+
+To be continued on Friday.
+
+== 2010-07-01
+
+Actually I continued it earlier, the topic is quite interesting. ;)
+
+So the first hack is that RtfImportFilter::filter() just closes the document it
+got and invokes the old filter directly, from the user's point of view, this
+isn't noticeable. This way RtfFilter can be registered as a preferred filter for
+RTF. (I'm just documenting this here, we discussed this already with my mentors
+on IRC already.)
+
+The next tricky part was that now OOo knew the old filter imported the
+document, so it called the old filter's export when the user saved the
+document. The hard part here is that I had to pass the stream I got to
+RtfFilter, opening a new one based on the file URL won't work. (I tried it.
+RtfFilter is invoked, it exports the document, then OOo notices that the old
+filter wrote nothing, so it truncates the file. Result: empty output.) That
+means using `xStorable->storeAsURL` won't work (even if that allows specifying
+the filter to use). But it's still possible: I created a simple old exporter
+named `SwRTFWriterOld` and invoking RtfFilter is just 11 lines. :) (Basically
+the trick is to wrap `SvStream` using `utl::OStreamWrapper` then unwrap it
+using `utl::UcbStreamHelper::CreateStream`. Once you figure out the right API,
+it isn't that hard.)
+
+Now the only remaining part regarding filter config is to hide the `Rich Text
+Format Old` item from the Open / Save As dialog. You would think that the two
+problem is the same, but actually it does not. The trick I used was to set the
+UIName of the old filter to empty, then search the code that builds the strings
+in the combobox for both Open and Save As, finally skip the filters with empty
+UIName.
+
+To sum up, I hope I now finished all filter-related work for a while and can
+return to the actual RtfExport filter and continue the work there. What's next?
+I plan to continue with sections.
+
+== 2010-07-02
+
+Before continuing the implementation of the actual filter I stopped and looked
+back to see what I've done so far. I like to create a lot of small commits, but
+in the long run this is not always good. My master branch had 275 commits, and
+I know most of them is not interesting, I knew that there were two interesting
+small commits. Given that sooner or later I'll forget this, I used `git rebase
+-i` to squash no longer interesting details, IOW create a few larger commits,
+while keeping that two small important ones, so that in case one has a look at
+my branch, she can get the "big picture" more easily.
+
+You can call this work "cosmetics", but it took only two hours to review the
+whole history and I think it worths. To prevent any further problems, I created
+a `before-rebase-2010-07-02` tag, then squashed the commits. The result:
+
+----
+$ git rev-list upstream..before-rebase-2010-07-02|wc -l
+275
+$ git rev-list upstream..|wc -l
+25
+----
+
+Most of the new commits are large ones, like "implement nested table support",
+and the two
+link:$$http://cgit.freedesktop.org/~vmiklos/ooo320-m17-gsoc/commit/?id=4eba84b566e96c6d75eceac10c3c167ac53b6264$$[small]
+link:$$http://cgit.freedesktop.org/~vmiklos/ooo320-m17-gsoc/commit/?id=9aaf978de1f7c6398c195b216046040d83dfffb1$$[ones]
+are now harder to miss.
+
+If you want to get a verbal overview, so far the big chunks are:
+
+- filter: configuration update*
+- sfx2: hide filters with empty uiname*
+- svtools: new keywords for nested tables
+- sw/source/filter/rtf: the new builtin filter to call the uno one*
+- sw/source/filter/ww8: the new uno export filter
+- writerfilter: the new uno filter
+
+We talked a bit with Cedric about once I'm ready how could we upstream the new
+filter. Probably the process will be in two steps: first the parts without an
+asterisk could be submitted as they're harmless (and this way the new filter is
+disabled by default). Then later second 3 parts could be submitted, but maybe
+that will happen only when the writerfilter-based importer is ready (which is
+obviously out of the scope of my GSoC project) and then only the first part of
+the configuration update patch will be needed, nothing more.
+
+(While searching for something totally different, I found
+http://florianreuter.blogspot.com/2009/06/api-design-matters-i-was-reading-very.html[this].
+Interesting, though I can't agree: a lot of my work is about pushing for the
+uno-based RTF export, so... ;) )
+
+OK, have a nice weekend, and then on Monday I plan to start working on
+sections. :)
+
+== 2010-07-05
+
+Started working on sections. Added a sections.odt to ooo-test-files to test
+balanced columns and implemented the necessary methods to get it exported
+correctly.
+
+Then implemented non-balanced ones; the magic returned here as well, for some
+reason the RTF importer just ignores everything after a non-balanced column for
+the old exporter - this isn't the case with the new one. (I guess it'll all
+about if you put too much `}` and close the initial `{`, then the importer
+ignores the rest of the input stream, which is - strictly speaking - not really
+a bug. But the old exporter is then buggy. ;) )
+
+Then worked on column breaks - the OOo importer already handled this but the
+exporter did not. (Tested with Word, took a bit time to figure out why it
+breaks, but the current output can be now imported with OOo and Word as well.)
+
+The last item today is about special page breaks, ie. when the next page should
+be an even or an odd page. I most implemented this, but for some weird reason
+_one_ section break in sections.odt is exported as a continuous one instead of
+an odd break. Really no idea why...
+
+OK, found out. :) Given that RtfExport::PrepareNewPageDesc is heavily inspired
+by DocxExport::PrepareNewPageDesc, I did not notice that I have to change the
+logic there, as RTF wants the sections breaks at the start of the paragraphs.
+Once I fixed that, sections.rtf opens in Word. (OOo's import ignores the typo
+of the section break, so the output won't be proper there.)
+
+So the section basics are done, I think - and then I want to start working on
+headers / footers tomorrow.
+
+I also wrote a
+link:$$http://cgit.freedesktop.org/~vmiklos/ooo320-m17-gsoc/plain/NEWS?h=diary$$[summary]
+on what new features are supported so far.
+
+== 2010-07-06
+
+Worked on headers / footers. There is a method called WriteHeadersFooters(),
+but actually it's called just in case the header is specific to a section. The
+first step was to export a simple header, that works now. After this, adding
+simple footer support wasn't a problem.
+
+The next feature was header / footer on the title page. This is still special,
+at least the WriteHeadersFooters() method is not invoked automatically for it.
+
+I must note here before I forget: left is even, right is odd is Writer. (It's
+logical if you think of a book, but it isn't logical if you think of print
+preview. ;) )
+
+Then I started working on headers / footers related to sections, but that's a
+bit more complex. The problem is that such sections are emitted among section
+properties, while a header contains a whole paragraph, so I need to save the
+run/paragraph/style buffer and restore it after the header / footer is written.
+
+This is now solved, but still there is a problem: we need to delay such headers
+like we do already for section breaks in
+RtfAttributeOutput::StartParagraphProperties(). This is not something I did
+yet, I'll check it tomorrow.
+
+== 2010-07-07
+
+Fixed style headers / footers, the delay idea I mentioned yesterday did the
+trick (see header-footer-style.odt).
+
+Replaced all of my debug printfs calls with OSL_TRACE(). That allows me to
+avoid having to use #ifdef around them, as they are automatically disabled in
+non-debug builds.
+
+Then I added support for protected sections, this is ignored by the OOo
+importer, but it can be tested with Word (see sections.odt).
+
+The next feature is section-specific page borders. The new output can be
+imported by OOo as well, the old exporter wrote output which could be opened in
+Word only (see sections-border.odt).
+
+At the end, I added code to get fields work - it's quite untested, except page
+numbers, including non-decimal formats.
+
+There were two additional features here:
+
+- inherit numbering type from page styles
+- handle restart of page numbering
+
+Both are implemented now. But given that the old OOo import/export does not
+support them, you need Word to test it (header-footer-restart.odt).
+
+== 2010-07-08
+
+Today I implemented footnotes and endnotes. Both automatic and custom marks are
+supported. The trick here was that foot/endnotes are whole paragraphs and we
+have to write it in the middle of a run. As usual, the "save the buffers, clear
+them, call the function, restore the buffers" trick worked here as well.
+
+Spent some time trying to figure out why Wordpad can't open graphics exported
+by OOo (both the new and the old filter), while it can when it's saved by Word.
+The reason is that graphic is always just exported as PNG by OOo, while Word
+exports it as WMF as well, like this:
+
+----
+{\*\shppict {\pict\pngblip ...}}{\nonshppict {\pict ...}}
+----
+
+Given that the code even in OOo's old export filter has comments about this, I
+think it'll be a typo or something. The current output has PNG data but it's
+declared as WMF, so the bug will be that somehow OOo thinks it's a WMF picture,
+hence it needs no duplicate version for Wordpad...
+
+And yes, it's all about a
+link:http://svn.services.openoffice.org/opengrok/xref/Current%20%28trunk%29/sw/source/filter/rtf/rtfatr.cxx#1528[missing
+break], after adding it, it works fine. :)
+
+== 2010-07-09
+
+Implemented line numbering, Word is needed for testing as the OOo importer
+doesn't support it, either.
+
+Then I improved `RtfExport::OutChar` by adding more escapes: there are special
+RTF commands for 3 formatting marks and that was not handled before. (This was
+fine in the old code.)
+
+Looks like ooo-build's `border-types-dotted-dashed.diff` introduces some dead
+code, after a short discussion with Cedric, the issue is
+http://cgit.freedesktop.org/ooo-build/ooo-build/commit/?id=c9bc1128cbae3e922115a1b815ec469001232929[fixed].
+
+Finally I cleaned up a few functions that used `ByteString` to use `OString`
+instead, as
+http://svn.services.openoffice.org/opengrok/xref/Current%20%28trunk%29/tools/inc/tools/string.hxx#43[suggested].
+
+What's next on Monday? Bookmarks, probably.
+
+== 2010-07-12
+
+Cedric had a http://cedric.bosdonnat.free.fr/wordpress/?p=243[great post] about
+how to open odt/docx files, but one bit was missing, how to filter the file via
+xmllint so that the output will be readable?
+
+----
+au FileType xml exe ":silent 1,$!xmllint --format --recover - 2>/dev/null"
+----
+
+Of course somehow limiting this to xml files inside odt/docx zips would be
+nice, but that's a minor issue.
+
+Then I noticed that the docx exporter has a nice feature called "split the runs
+according to the bookmark start / ends". Give that I need this for RTF as well,
+Kendy suggested to move it to MSWordExportBase, so I worked on this.
+
+Once this was complete, the real bookmark support was fairly easy.
+
+Then I worked on implicit bookmarks, for example when you add a reference to a
+footnote. The old exporter didn't implement this, the result was an ugly
+`Error: Reference source not found` message, now this works correctly.
+
+Fixed a bug that made the exporter segfault when exporting table of contents -
+but the result is now far better, ie it is properly read-only (in Word).
+
+Finally implemented postit comments, that was an interesting task as it's only
+supported in WW8, not in the old RTF of DOCX.
+
+== 2010-07-13
+
+Implemented the page description table. Each entry (to my understanding)
+contains a page style. This is not something supported by RTF by default, but
+OOo has an extension for this (the `\pgdsctbl` group) and given that the old
+exporter/importer supported this, it was time for the new exporter to implement
+it as well.
+
+Then implemented minor remaining outline methods:
+DisallowInheritingOutlineNumbering and OutlineNumbering.
+
+Finally I started working on redlines. So far only inserts are exported, I'll
+continue with deletions tomorrow.
+
+== 2010-07-14
+
+Finished redlines, deletions are now exported as well.
+
+Had a look at ooconvwatch again. Given that my test.sh script produces foo.rtf
+and foo.good.rtf from foo.odt (using the new and the old filter), I created a
+convwatch and a convwatch.good directory, symlinked foo.rtf and foo.good.rtf to
+there (both as foo.rtf) and then ran:
+
+----
+~/git/ooo-build/build/install/program$ time ../../../bin/ooconvwatch -c -d /home/vmiklos/git/gsoc/ooo-test-files/writer/convwatch.good
+~/git/ooo-build/build/install/program$ time ../../../bin/ooconvwatch -d /home/vmiklos/git/gsoc/ooo-test-files/writer/convwatch
+----
+
+Of course it still fails even for a hello world, but the reason of the failure
+is different. Last time I tried, it failed because I did not export page styles
+(including margins), now it fails because:
+
+- kerning was not exported by the old filter - that's good
+- RtfImportFilter::filter does not work with loadDocumentFromURL() - that's
+  bad. I see that the problem is that I currently open a new stream instaed of
+  reusing the one I got (so ooconvwatch gets an empty stream). That's not a
+  problem as a user but it's a problem for convwatch, I'll see what can I do with
+  this. A workaround for this issue is to change $$`pwd`/soffice$$ to
+  /usr/bin/soffice in ooconvwatch.
+
+Dived in drawing objects: there are two approaches here:
+
+- Word 6.0/95 uses 'drawing objects' - `\do` control word
+- 97-2007 uses 'shapes' - `\shp` control word
+
+To make the decision easy, the old filter did not export anything when met a
+drawing object. ;) Seriously speaking, I first want to implement the `\shp`
+syntax, then I can work on backward compatibility.
+
+To get started, I created a new RtfVMLExport class and the draw.odt testfile
+gets exported more or less correctly with it. (The position is not exactly
+correct and the anchor is missing, but other than that it should be OK.)
+
+== 2010-07-16
+
+Continued working on drawing objects. Useful locations are:
+
+- svx/inc/svx/escherex.hxx: the ESCHER_Prop_* defines are used in nPropId of EscherProperties
+- svx/source/msfilter/eschesdo.cxx: implementation of EscherEx
+- oox/source/export/vmlexport.cxx: implementation of oox::vml::VMLExport (docx draw export)
+
+So what I did was:
+
+- add support for the remaining rectangle props
+- add support for other rectnagle-like shapes, like ellipse
+
+Then I had a look at freeform lines. The spec here is a joke. Two property
+holds the most important info for lines: pVertices (it's actually pVerticies, I
+guess due to a typo) and pSegmentInfo. The spec says the followings:
+
+[options="header",grid="all"]
+|====
+|Property     |Meaning                  |Type of value |Default
+|pSegmentInfo |The segment information. |Array         |NULL
+|pVerticies   |The points of the shape. |Array         |NULL
+|====
+
+Informative, isn't it? :) Luckily I could have a look at the output of Word and
+read the code of the VML exporter docx uses and using that info, been able to
+implement this for RTF. (pSegmentInfo in fact is a list of initegers,
+describing the type of the points: "move to", "line to", etc. Each segment may
+have 0, 1 or 3 pair of points associated with it. The spec has no table
+describing the number of associated point pairs...)
+
+Implementing simple (ie non-freeform) lines was easy after this.
+
+I think only one major feature is remaining from drawing support: callouts. I
+mean in case there is a text inside the shape. Nor the old RTF (obviously...)
+neither the docx exporter handles this at the moment, so I wonder if I should
+care about this. (The doc exporter handles it, but figuring out the API from
+that spaghetti code...)
+
+A bit later I figured out how to do this, so now draw texts are exported as
+well. (Their formatting is not yet.)
+
+Finally I implemented a bit more drawing properties so now vertical texts are
+exported properly.
+
+To sup up, I think I'm done with drawing, except:
+
+- support for the old syntax (pre-Word 97, but Wordpad doesn't understand
+  the old syntax, either - so I don't think I should care about it)
+- formatting for the text on drawings (I have an idea how this could be
+  implemented, I'll check it on Monday)
+
+== 2010-07-19
+
+Implemented paragraph / character formatting for draw texts. This was basically
+about implementing the RTF equivalent of WW8_SdrAttrIter and updating
+RtfVMLExport::WriteOutliner() to use it.
+
+Once I had it working, I realised that there is nothing WW8-specific in
+WW8_SdrAttrIter, so I refactored it to MSWord_SdrAttrIter: changed it to accept
+an MSWordExportBase (instead of a WW8Export), moved its declaration to
+wrtww8.hxx and finally changed both RtfVMLExport and WW8Export to use
+MSWord_SdrAttrIter.
+
+A minor trick: when I add a new RTF keyword normally I would have to build &&
+deliver svtools every time, which is rather time-consuming. So I just use:
+
+----
+cat svtools/source/svrtf/rtfkeywd.hxx > solver/320/unxlngi6.pro/inc/svtools/rtfkeywd.hxx
+----
+
+and then I just have to rebuild `sw`, where I actually do use the new define.
+
+Then I renamed RtfVMLExport to RtfSdrExport, as actually RTF does not use VML.
+
+After this, I worked on an older bug: in RTF, you can't enable form protection
+for just a section: if you want to do this, you have to enable it by default
+and then disable it on a per-section basis. So earlier I always write the
+`\formprot` control word in the header. The problem with this is that for some
+reason this protects drawings as well (you can't even move them). Given that
+this is how Word behaves, there is no real solution, but there is a workaround
+for most cases: just write `\formprot` when there is a protected section in the
+document. (Not my idea, the Word RTF exporter does this.) So I implemented this
+for OOo as well.
+
+An other older TODO item was to revisit the RTF import problem. The source of
+all pain is that the old importer isn't an UNO component, so given that the new
+exporter is an UNO one, I had to add an UNO wrapper around the old importer. I
+already worked around the problem once, but that was an ugly solution: the
+wrapper importer just extracted the URL of the document, closed the stream and
+imported the URL using the old filter by explicitly invoking a "Rich Text
+Format Old" filter, which I created. This had various problems:
+
+- that 'Rich Text Format Old' filter is something I wanted to avoid
+- after importing, OOo wanted to use the old exporter to save a doc, so I had to add hacks to the old exporter as well
+- given that (from the API point of view) the importer did not touch the
+  document model at all, I break the "import an RTF document using the API"
+  feature
+
+The first two was just ugly, but the third was a real problem, I could not use
+convwatch this way. The new solution is to just use the SwRTFParser class
+directly, that solves all 3 problems! :)
+
+Finally I had a look at how could I improve testing, discussed the topic with
+Thorsten on IRC. The idea is to avoid convwatch / UNO as it's too slow /
+problematic for our purposes. He shared his oodocdiff.sh script which compares
+two postscript files graphically + determines if there is any difference. Then
+I wrote a psconv.py script that would convert odt (and other) files to
+postscript, but it's quite unreliable. In the meantime, he implemented
+-print-to-file in desktop-cmd-bulk-conversion.diff in master, so I decided to
+delay this topic again. ;) (An other interesting topic is to figure out how can
+I convert a RTF to PS using MS Office - to test drawings, nested tables, etc -
+but I did not start searching in that direction.)
+
+== 2010-07-20
+
+Started working on forms, implemented checkbox.
+
+Then I had a look at textboxes. They are weird. For checkboxes, there is a
+FORMCHECKBOX field instruction, but textboxes are just shapes, it seems. Of
+course just passing the draw object to the draw exporter does not result in a
+correct output, either. Also, it seems that the default value for a textbox is
+hidden in some blob value. :( (If I save the doc as rtf in Word then the output
+is correct but I can't find the string in the rtf file if I open it with vim.)
+
+In detail: the shape can have an `\shptxt` group, that's where the text of the
+shape is stored. Now, in case of textboxes, this includes a `\*\objdata` group,
+which contains a blob. If this is removed, Word no longer recognizes the shape
+as a TextBox object...
+
+== 2010-07-21
+
+Improved the "new filter should call the old importer" code, as suggested by
+Kendy. Now more code is shared, -26 lines of code.
+
+Implemented textboxes in forms. It turns out that page 195 of the spec has a
+good example on how to export those. After some reverse engineering I now
+export the default text and the textbox name in a blob, the rest can be done
+using normal text.
+
+Then I implemented listboxes. This was a bit tricky as well, not because a blob
+is needed here, but because the spec is rather quiet about how how the various
+listbox-related tags should be used, but after some trying, I got it.
+
+This means I finished implementing form fields - RTF does not support other
+form field types. It would be possible to export the rest of the controls (like
+options buttons) as ActiveX controls, but there is no RTF markup for them, they can
+be described only as shapes with a bunch of binary instructions (blobs), which
+are not really documented, so I would rather avoid them. Especially that Word
+2007 calls those controls as "legacy" ones. OTOH the "new" ones are simply not
+exported to RTF yet (by Word), so I think the conclusion is that for now the
+best is to just support form fields, then add support for the new controls when
+Microsoft will update the RTF spec to have support for those new controls.
+
+I had a quick look at math support - the situation is the same as with forms:
+the old RTF filter and the DOCX one does not support it. For DOC, there is a
+class named SvxMSExportOLEObjects, which seems to do the job. I also started to
+read the relevant part of the RTF spec, it starts with:
+
+[quote, page 115]
+____
+These control words mirror the Office Open XML Math elements (OMML, see Office
+Open XML, Section 7.1), only they are written with RTF syntax.
+____
+
+So I wonder if it worths starting to work on RTF math support before the DOCX
+one. Also, it seems that the math part is a separate filter, and it is an
+embedded OLE object in the document.
+
+== 2010-07-23
+
+Trying to understand how WW8 exports OLE objects. Relevant methods:
+WW8Export::OutputOLENode, SwBasicEscherEx::WriteOLEFlyFrame.
+
+The OLE objects have two important properties: the object data, and the
+resulting bitmap. The later is not optional in case of OLE objects.
+
+So first I took the easy part: exporting the resulting bitmap. ODF just uses
+`style:vertical-pos="middle"`, but in RTF you need to use the `\dn` control
+word to move the bitmap down. Once I found that this can be found in
+`WW8Export::OutGrf` for doc, implementing the RTF version wasn't really hard.
+
+At this point (for example math) OLE objects can be viewed in the exported RTF
+doc, the rest is "just" about to be able to edit the object as well.
+
+I also want to note that ideally the exporter will be quite general here, so
+I'm testing with math objects, but it works out of the box with charts as well,
+not surprisingly.
+
+Then I searched a lot to know a bit more about the objdata format,
+http://www.eggheadcafe.com/forumarchives/win32programmerole/Aug2005/post23137822.asp[this
+forum post] suggests that it's OLE1. (Need to check if `SvxMSExportOLEObjects`
+uses OLE1 or OLE2, if it does 2, can I tell it to use OLE1?) And
+http://msdn.microsoft.com/en-us/library/dd942557%28PROT.10%29.aspx[here] I
+found the spec of OLE1/OLE2, I'm checking those.
+(http://download.microsoft.com/download/B/0/B/B0B199DB-41E6-400F-90CD-C350D0C14A53/%5BMS-OLEDS%5D.pdf[pdf
+version])
+
+== 2010-07-26
+
+I converted math.odt to DOC and exported it as RTF in Word2007, then saved the
+blob of the `\objdata` group
+http://people.freedesktop.org/~vmiklos/objdata-math-example.bin[here]. From the
+spec, this is an EmbeddedObject, its contents:
+
+- ObjectHeader (2.2.4 of the OLE spec): here 31 bytes
+- NativeDataSize (see 2.2.5): 4 bytes, here it's 0x00000c00 = 3072
+- NativeData: here 3072 bytes, that's what I get from ExportOLEObject(), I guess
+- MetaFilePresentationObject: the rest
+  * Header: a StandardPresentationObject (with PresentationObjectHeader.ClassName = "METAFILEPICT")
+    ** Header: a PresentationOjbectHeader: 8 bytes of static header + "METAFILEPICT" (LengthPrefixedAnsiString, 17 bytes) = 25 bytes
+    ** Width: 4 bytes, MetaFilePresentationDataWidth: 0x0000043f = 1087
+    ** Height: 4 bytes, MetaFilePresentationDataHeight: -1 * 0xfffffa7d = 1410 (it's an unsigned number!)
+  * PresentationDataSize: 4 bytes: 0x1946 = 6470 (the number is the real value + 8)
+  * Reserved{1,2,3,4}: 8 bytes of junk
+  * PresentationData: here 6462 bytes
+
+When I started working on this, a problem I hit was that the header has
+a ClassName field which must be "Equation.3" for math objects, but I was not able to
+figure out how to extract that from SwOLENode. There is SotExchange::IsMath()
+and a similar method for charts but what about the rest? (A good starting point
+may be
+http://svn.services.openoffice.org/opengrok/xref/OOO320_m19/migrationanalysis/src/driver_docs/sources/CommonMigrationAnalyser.bas#812[this
+one].)
+
+So far what I implemented is ObjectHeader, NativeDataSize and NativeData, I
+want to continue with MetaFilePresentationObject tomorrow.
+
+== 2010-07-27
+
+Implemented the MetaFilePresentationObject field of EmbeddedObject, and now
+editing a math object is possible!
+
+Now that hopefully I stop poking binary files for a while, time to bookmark the
+http://vimdoc.sourceforge.net/htmldoc/usr_23.html#23.4[relevant chapter] of the
+vim documentation. (The most important: `:%!xxd` and `:%!xxd -r`)
+
+Given that this was the last major feature I wanted to work on, I'm now
+rebasing my patch(set) against ooo320-m19.
+
+== 2010-07-28
+
+Given that now I build ooo320-m19 and I'll later do more builds I thought it's
+time to figure out how to use distcc so that I can use not only my laptop for
+building but an other unused box here at home as well. In case you don't want
+to re-configure, you can use:
+
+----
+DISTCC_HOSTS='localhost 192.168.239.7' CXX="distcc g++" build -P6 -- -P6
+----
+
+If you reconfigure, you need:
+
+----
+export DISTCC_HOSTS='localhost 192.168.239.7'
+./configure ... --with-gcc-speedup=distcc --with-max-jobs=6
+----
+
+(Or if you're an icecream user, read
+http://cedric.bosdonnat.free.fr/wordpress/?p=637[here].)
+
+So after I configured distcc, I built ooo320-m19 and rebased my patch against
+it - no surprise I did not have to change anything, since the difference was
+small enough. I also added copyrights (as discussed with Kendy) to files I
+created.
+
+An other issue I had a look at is copy&paste, that now works fine. First it
+used the old filter, second when I converted it to use the new filter it
+segfaulted, but that's now fixed.
+
+The next step will be to rebase to an upstream m85 build, so far I requested my
+account http://www.openoffice.org/issues/show_bug.cgi?id=113498[here].
+
+== 2010-07-29
+
+I just finished my first "upstream" build, dev300-m85. I used the howto from http://cedric.bosdonnat.free.fr/wordpress/?p=637[from Cedric]. All I had to change is a bit more configure switches:
+
+----
+./configure --with-use-shell=bash --disable-build-mozilla --with-jdk-home=/usr/lib/jvm/java-1.5.0-gcj-1.5.0.0 --with-system-mozilla=mozilla --with-openldap --disable-binfilter --disable-epm
+make
+export LOCALINSTALLDIR=~/git/gsoc/upstream/myhack-install
+cd ~/git/gsoc/upstream/myhack/instsetoo_native/util
+rm -rf ../../../myhack-install; dmake openoffice_en-US PKGFORMAT=installed
+----
+
+Then Kendy linked me the
+http://wiki.services.openoffice.org/wiki/Mercurial/Cws[wiki article about
+CWSes]. Ah and if we're at CWS, the hg guys have a nice
+http://mercurial.selenic.com/wiki/GitConcepts#Command_equivalence_table[table]
+which is really useful for guys like me who are familiar with git but no hg.
+
+I also had to create http://qa.openoffice.org/issues/show_bug.cgi?id=113532[an
+issue] - I should use its number in the commit messages.
+
+Other short notes:
+
+- Looks like a dsa key is needed for ssh, so I submitted a new one...
+- As Kendy pointed out, the --with-gcc-speedup parameter of ooo-build's
+  configure does not work with distcc. I plan to add support for it, but it has
+  a low priority. :)
+
+== 2010-07-30
+
+Rebased my git repo on top of dev300-m85:
+
+- first just fixed patches to apply
+- then fixed them to build
+- finally compared the ooo320-m17 and the dev300-m85 output
+
+The first two part is fine, the last is *almost* fine, looks like the objdata
+part of math objects is now buggy. And looks like the bug is that
+SvxMSExportOLEObjects::ExportOLEObject does not give me the correct output
+anymore. Which means the math export is broken in the ww8 exporter as well:
+http://www.openoffice.org/issues/show_bug.cgi?id=113542[created bug].
+
+Other than that, I'm still waiting for my ssh key to be uploaded.
+
+I also tried to search bugs which are fixed by my work and listed then in the
+link:$$http://cgit.freedesktop.org/~vmiklos/ooo-gsoc/plain/NEWS?h=diary$$[summary]
+file (11 issues!).
+
+== 2010-08-02
+
+Not much today, waiting for my ssh key to be accepted. ;)
+
+http://www.openoffice.org/issues/show_bug.cgi?id=113542[Issue 113542] turned
+out to be invalid, ooo-build has `default-ms-filter-convert.diff` that enables
+the conversion of the the math object by default, so all I needed was to enable
+that setting in the upstream build manually and then I got the correct RTF
+output as well.
+
+== 2010-08-03
+
+Woho, my ssh key is accepted, I pushed out my hg changesets to the
+http://hg.services.openoffice.org/cws/vmiklos01[cws].
+
+I also posted
+http://article.gmane.org/gmane.comp.gnome.ximian.openoffice/4424[a patch] to
+add distcc support to ooo-build.
+
+Then I set up `cws`. Related links:
+http://wiki.services.openoffice.org/wiki/CWS[general],
+http://wiki.services.openoffice.org/wiki/.cwsrc[.cwsrc],
+http://www.perlmonks.org/?displaytype=displaycode;node_id=457764[cvs password
+converter]. Once I had it all working, I could run:
+
+----
+CWS_WORK_STAMP=vmiklos01 cws task i<number>
+----
+
+for each issue I think I fixed with my work.
+
+Finally I had a look at how to use `cws-extract`. The trick here was to re-use
+the DEV300 clone I already. The following achieved this:
+
+----
+~/git/gsoc/upstream$ ~/git/ooo-build/bin/cws-extract vmiklos01
+----
+
+== 2010-08-04
+
+Pushed distcc support and two cws-extract fixes to ooo-build.
+
+Built ooo-build (ooo330-m2) and backported my cws to it using cws-extract, then
+fixed up the build manually (there were only two problems). There were also
+problem with the deletion of large code chunks (I need to discuss with Cedric
+on updating border-types-dotted-dashed.diff for the new filter), so for now I
+just removed the files from makefile.mk and used `#if 0` ... `#endif` instead.
+Once this was done, I used:
+
+----
+git diff --no-prefix upstream-ooo3300.. > patch.diff
+cat patch.diff | grep -v ^diff | grep -v ^index | grep -v ^new >patch.diff.new && mv patch.diff.new patch.diff
+----
+
+The second line was suggested by Fridrich on IRC on 2010-07-19.
+
+Finally I pushed the resulting 'cws-vmiklos01.diff' to ooo-build. (It was too
+early in the apply file, but fortunately Petr noticed it quickly and he even
+fixed the breakage. :) )
+
+== 2010-08-06
+
+As Kendy suggested, moved up my CWS in the ooo-build apply file so it's almost
+unmodified (vs. the HG CWS) and fixed up the docx patches to apply on top of my
+CWS patch.
+
+Then I
+http://cgit.freedesktop.org/ooo-build/ooo-build/commit/?id=63eb695bfe4bb870206a1f32f99be61017276e10[improved]
+cws-extract a bit: now it extracts as single big diff, not a sequence of a lot
+of incremental patches.
+
+== 2010-08-09
+
+I'm trying to collect here my most frequently used bookmarks during GSoC:
+
+- http://cgit.freedesktop.org/~vmiklos/ooo-gsoc/[my ooo-gsoc repo]
+- http://translate.google.com/#de|en|[Google Translate (German to English)] - to understand the bolognese sauce around the spaghetti :)
+- http://wiki.services.openoffice.org/wiki/Export_filter_framework[wiki]
+- http://svn.services.openoffice.org/opengrok/[OpenGrok]
+- http://docs.go-oo.org/[doxygen]
+- http://qa.openoffice.org/issues/show_bug.cgi?id=113532[issues]
+
+The other list I wanted to collect is about the specifications I used:
+
+- http://www.microsoft.com/downloads/details.aspx?FamilyId=DD422B8D-FF06-4207-B476-6B5396A18A2B&displaylang=en[Word
+  2007: Rich Text Format (RTF) Specification, version 1.9.1]
+- http://msdn.microsoft.com/en-us/library/dd942265%28v=PROT.10%29.aspx[$$[MS-OLEDS]:
+  Object Linking and Embedding (OLE) Data Structures$$]
+- http://standards.iso.org/ittf/PubliclyAvailableStandards/index.html[ISO/IEC
+  29500-1:2008] - OOXML spec
+- http://msdn.microsoft.com/en-us/library/cc313153%28v=office.12%29.aspx[$$[MS-DOC]:
+  Word Binary File Format (.doc) Structure Specification$$]
+
+== 2010-08-10
+
+Given that I'll be on holiday between 12th and 16th, this is probably my last
+post in this particular diary. :)
+
+I just want to thank the whole Go-OO team for this wonderful adventure. I
+learned a lot in the last three months and it was a great fun. I especially
+want to thank (in no particular order) my mentors Cedric and Kendy for their
+continuous help, also Thorsten for his help in scripting issues, Kohei for
+initial help when fighting with various string classes, Bubli for help when the
+Czech guys were not on IRC, Petr on ooo-build patching issues and people who
+helped but I forgot their name. ;)
